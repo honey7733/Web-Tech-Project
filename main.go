@@ -16,17 +16,10 @@ import (
 
 type Block struct {
 	Pos       int
-	Data      BookCheckout
+	Data      Book
 	Timestamp string
 	Hash      string
 	PrevHash  string
-}
-
-type BookCheckout struct {
-	BookID       string `json:"book_id"`
-	User         string `json:"user"`
-	CheckoutDate string `json:"checkout_date"`
-	IsGenesis    bool   `json:"is_genesis"`
 }
 
 type Book struct {
@@ -34,28 +27,28 @@ type Book struct {
 	Title       string `json:"title"`
 	Author      string `json:"author"`
 	PublishDate string `json:"publish_date"`
-	ISBN        string `json:"isbn:`
+	ISBN        string `json:"isbn"`
 }
 
 func (b *Block) generateHash() {
-	// get string val of the Data
+	// Get string value of the Data
 	bytes, _ := json.Marshal(b.Data)
-	// concatenate the dataset
-	data := string(b.Pos) + b.Timestamp + string(bytes) + b.PrevHash
+	// Concatenate the dataset
+	data := fmt.Sprintf("%d%s%s%s", b.Pos, b.Timestamp, string(bytes), b.PrevHash)
 	hash := sha256.New()
 	hash.Write([]byte(data))
 	b.Hash = hex.EncodeToString(hash.Sum(nil))
 }
 
-func CreateBlock(prevBlock *Block, checkoutItem BookCheckout) *Block {
-	block := &Block{}
-	block.Pos = prevBlock.Pos + 1
-	block.Timestamp = time.Now().String()
-	block.Data = checkoutItem
-	block.PrevHash = prevBlock.Hash
-	block.generateHash()
-
-	return block
+func CreateBlock(prevBlock *Block, book Book) *Block {
+    block := &Block{
+        Pos:       prevBlock.Pos + 1,
+        Timestamp: time.Now().String(),
+        Data:      book,
+        PrevHash:  prevBlock.Hash,
+    }
+    block.generateHash()
+    return block
 }
 
 type Blockchain struct {
@@ -64,19 +57,39 @@ type Blockchain struct {
 
 var BlockChain *Blockchain
 
-func (bc *Blockchain) AddBlock(data BookCheckout) {
+func (bc *Blockchain) AddBlock(book Book) {
+    if len(bc.blocks) == 0 {
+        log.Println("Blockchain is empty. Initializing with Genesis Block.")
+        bc.blocks = append(bc.blocks, GenesisBlock())
+    }
 
-	prevBlock := bc.blocks[len(bc.blocks)-1]
+    prevBlock := bc.blocks[len(bc.blocks)-1]
+    block := CreateBlock(prevBlock, book)
 
-	block := CreateBlock(prevBlock, data)
-
-	if validBlock(block, prevBlock) {
-		bc.blocks = append(bc.blocks, block)
-	}
+    if validBlock(block, prevBlock) {
+        bc.blocks = append(bc.blocks, block)
+        log.Printf("Block #%d added successfully!", block.Pos)
+    } else {
+        log.Println("Failed to add block: Invalid block.")
+    }
 }
 
 func GenesisBlock() *Block {
-	return CreateBlock(&Block{}, BookCheckout{IsGenesis: true})
+    genesisBook := Book{
+        ID:          "0",
+        Title:       "Genesis Block",
+        Author:      "System",
+        PublishDate: time.Now().Format("2006-01-02"),
+        ISBN:        "0",
+    }
+    genesisBlock := &Block{
+        Pos:       0,
+        Data:      genesisBook,
+        Timestamp: time.Now().String(),
+        PrevHash:  "0",
+    }
+    genesisBlock.generateHash()
+    return genesisBlock
 }
 
 func NewBlockchain() *Blockchain {
@@ -84,7 +97,6 @@ func NewBlockchain() *Blockchain {
 }
 
 func validBlock(block, prevBlock *Block) bool {
-
 	if prevBlock.Hash != block.PrevHash {
 		return false
 	}
@@ -101,89 +113,85 @@ func validBlock(block, prevBlock *Block) bool {
 
 func (b *Block) validateHash(hash string) bool {
 	b.generateHash()
-	if b.Hash != hash {
-		return false
-	}
-	return true
+	return b.Hash == hash
 }
 
 func getBlockchain(w http.ResponseWriter, r *http.Request) {
-	jbytes, err := json.MarshalIndent(BlockChain.blocks, "", " ")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(err)
-		return
-	}
+    log.Println("Fetching blockchain data...")
+    jbytes, err := json.MarshalIndent(BlockChain.blocks, "", " ")
+    if err != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        log.Printf("Error marshaling blockchain data: %v", err)
+        json.NewEncoder(w).Encode(err)
+        return
+    }
 
-	io.WriteString(w, string(jbytes))
+    w.WriteHeader(http.StatusOK)
+    io.WriteString(w, string(jbytes))
+    log.Println("Blockchain data sent successfully.")
 }
 
 func writeBlock(w http.ResponseWriter, r *http.Request) {
-	var checkoutItem BookCheckout
-	if err := json.NewDecoder(r.Body).Decode(&checkoutItem); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Printf("could not write Block: %v", err)
-		w.Write([]byte("could not write block"))
-		return
-	}
+    var book Book
+    if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
+        w.WriteHeader(http.StatusBadRequest)
+        log.Printf("Could not decode request body: %v", err)
+        w.Write([]byte("Invalid request payload"))
+        return
+    }
 
-	BlockChain.AddBlock(checkoutItem)
-	resp, err := json.MarshalIndent(checkoutItem, "", " ")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Printf("could not marshal payload: %v", err)
-		w.Write([]byte("could not write block"))
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	w.Write(resp)
+    // Generate a unique ID for the book
+    h := md5.New()
+    io.WriteString(h, book.ISBN+book.PublishDate)
+    book.ID = fmt.Sprintf("%x", h.Sum(nil))
+
+    // Add the book to the blockchain
+    if BlockChain == nil {
+        log.Println("Blockchain is not initialized.")
+        w.WriteHeader(http.StatusInternalServerError)
+        w.Write([]byte("Blockchain is not initialized"))
+        return
+    }
+
+    BlockChain.AddBlock(book)
+
+    // Respond with the added block
+    resp, err := json.MarshalIndent(book, "", " ")
+    if err != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        log.Printf("Could not marshal payload: %v", err)
+        w.Write([]byte("Could not write block"))
+        return
+    }
+    w.WriteHeader(http.StatusOK)
+    w.Write(resp)
 }
 
-func newBook(w http.ResponseWriter, r *http.Request) {
-	var book Book
-	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Printf("could not create: %v", err)
-		w.Write([]byte("could not create new Book"))
-		return
-	}
-
-	h := md5.New()
-	io.WriteString(h, book.ISBN+book.PublishDate)
-	book.ID = fmt.Sprintf("%x", h.Sum(nil))
-
-	resp, err := json.MarshalIndent(book, "", " ")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Printf("could not marshal payload: %v", err)
-		w.Write([]byte("could not save book data"))
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	w.Write(resp)
+func enableCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
+    // Initialize the blockchain
+    BlockChain = NewBlockchain()
 
-	BlockChain = NewBlockchain()
+    // Set up the router
+    r := mux.NewRouter()
+    r.HandleFunc("/", getBlockchain).Methods("GET")
+    r.HandleFunc("/", writeBlock).Methods("POST")
 
-	r := mux.NewRouter()
-	r.HandleFunc("/", getBlockchain).Methods("GET")
-	r.HandleFunc("/", writeBlock).Methods("POST")
-	r.HandleFunc("/new", newBook).Methods("POST")
+    // Enable CORS
+    handler := enableCORS(r)
 
-	go func() {
-
-		for _, block := range BlockChain.blocks {
-			fmt.Printf("Prev. hash: %x\n", block.PrevHash)
-			bytes, _ := json.MarshalIndent(block.Data, "", " ")
-			fmt.Printf("Data: %v\n", string(bytes))
-			fmt.Printf("Hash: %x\n", block.Hash)
-			fmt.Println()
-		}
-
-	}()
-	log.Println("Listening on port 3009")
-
-	log.Fatal(http.ListenAndServe(":3009", r))
+    // Start the server
+    log.Println("Listening on port 3009")
+    log.Fatal(http.ListenAndServe(":3009", handler))
 }
