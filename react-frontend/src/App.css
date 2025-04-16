@@ -5,6 +5,22 @@
   text-align: center;
 }
 
+/* Timeline container style */
+.timeline {
+  position: relative;
+  padding-left: 2rem;
+}
+
+/* Ensure each timeline item has proper spacing */
+.timeline-item {
+  position: relative;
+}
+
+/* Optional: Adjust timeline divider if needed */
+.timeline-divider {
+  left: -0.5rem;
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;
